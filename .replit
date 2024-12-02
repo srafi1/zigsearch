@@ -1,0 +1,37 @@
+modules = ["zig"]
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Build and Serve"
+
+[[workflows.workflow]]
+name = "Build and Serve"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "zig build && python3 -m http.server 8000 --bind 0.0.0.0"
+waitForPort = 8000
+
+[deployment]
+run = ["sh", "-c", "zig build && python3 -m http.server 8000 --bind 0.0.0.0"]
+
+[nix]
+channel = "stable-24_05"
+
+[[ports]]
+localPort = 8000
+externalPort = 80

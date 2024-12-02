@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WASM Search Engine Demo</title>
+</head>
+<body>
+    <h1>WASM Search Engine Demo</h1>
+    
+    <div>
+        <h2>Add Document</h2>
+        <input type="number" id="docId" placeholder="Document ID">
+        <textarea id="docContent" placeholder="Document content"></textarea>
+        <button onclick="addDocument()">Add Document</button>
+    </div>
+
+    <div>
+        <h2>Search</h2>
+        <input type="text" id="searchQuery" placeholder="Search query">
+        <button onclick="search()">Search</button>
+        <div id="results"></div>
+    </div>
+
+    <script src="js/search-engine.js"></script>
+    <script>
+        let searchEngine;
+        let index;
+
+        async function init() {
+            searchEngine = new SearchEngine();
+            await searchEngine.init();
+            index = searchEngine.createIndex();
+        }
+
+        function addDocument() {
+            const id = parseInt(document.getElementById('docId').value);
+            const content = document.getElementById('docContent').value;
+            searchEngine.addDocument(index, id, content);
+            alert('Document added!');
+        }
+
+        function search() {
+            const query = document.getElementById('searchQuery').value;
+            const results = searchEngine.search(index, query);
+            
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = `<h3>Results:</h3>
+                <ul>${results.map(id => `<li>Document ID: ${id}</li>`).join('')}</ul>`;
+        }
+
+        init();
+    </script>
+</body>
+</html>

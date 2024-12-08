@@ -9,6 +9,7 @@ pub const Index = struct {
     documents: std.ArrayList(Document),
     terms: std.StringHashMap(TermInfo),
     allocator: std.mem.Allocator,
+    avg_doc_length: f32,
 
     const Document = struct {
         id: u32,
@@ -35,6 +36,7 @@ pub const Index = struct {
             .documents = std.ArrayList(Document).init(allocator),
             .terms = std.StringHashMap(TermInfo).init(allocator),
             .allocator = allocator,
+            .avg_doc_length = 0,
         };
         return index;
     }
@@ -44,7 +46,7 @@ pub const Index = struct {
             doc.terms.deinit();
         }
         self.documents.deinit();
-        
+
         var term_iter = self.terms.iterator();
         while (term_iter.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -72,6 +74,11 @@ pub const Index = struct {
         }
 
         try self.documents.append(doc);
+
+        // Update average document length
+        const total_docs = @as(f32, @floatFromInt(self.documents.items.len));
+        const doc_length = @as(f32, @floatFromInt(doc.length));
+        self.avg_doc_length = (self.avg_doc_length * (total_docs - 1) + doc_length) / total_docs;
 
         // Update term frequencies and postings
         var term_iter = doc.terms.iterator();
@@ -106,30 +113,21 @@ pub const Index = struct {
         defer scores.deinit();
         try scores.appendNTimes(0, self.documents.items.len);
 
-        const avg_len = blk: {
-            var total_len: u32 = 0;
-            for (self.documents.items) |doc| {
-                total_len += doc.length;
-            }
-            break :blk @as(f32, @floatFromInt(total_len)) / @as(f32, @floatFromInt(self.documents.items.len));
-        };
+        const avg_len = self.avg_doc_length;
 
         var query_terms = std.mem.splitSequence(u8, query, " ");
         while (query_terms.next()) |term| {
             if (self.terms.get(term)) |term_info| {
-                const idf = std.math.log(
-                    f32, 10,
-                    @as(f32, @floatFromInt(self.documents.items.len)) / @as(f32, @floatFromInt(term_info.doc_freq))
-                );
+                const idf = std.math.log(f32, 10, @as(f32, @floatFromInt(self.documents.items.len)) / @as(f32, @floatFromInt(term_info.doc_freq)));
 
                 for (term_info.postings.items) |posting| {
                     const doc = self.documents.items[posting.doc_id];
                     const tf = @as(f32, @floatFromInt(posting.freq));
                     const doc_len = @as(f32, @floatFromInt(doc.length));
-                    
+
                     const numerator = tf * (Index.k1 + 1.0);
                     const denominator = tf + Index.k1 * (1.0 - Index.b + Index.b * doc_len / avg_len);
-                    
+
                     scores.items[posting.doc_id] += idf * numerator / denominator;
                 }
             }

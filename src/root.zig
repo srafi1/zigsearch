@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const SearchResult = struct {
     doc_id: u32,
@@ -151,5 +152,139 @@ pub const Index = struct {
         }.lessThan);
 
         return results.toOwnedSlice();
+    }
+
+    pub fn saveToDisk(self: *Index, filename: []const u8) !void {
+        const file = if (builtin.os.tag == .windows)
+            try std.fs.cwd().createFileW(try std.unicode.utf8ToUtf16LeAlloc(self.allocator, filename), .{})
+        else
+            try std.fs.cwd().createFile(filename, .{});
+        defer file.close();
+        const writer = file.writer();
+
+        // Write document count
+        try writer.writeInt(u32, @intCast(self.documents.items.len), .little);
+
+        // Write documents
+        for (self.documents.items) |doc| {
+            try writer.writeInt(u32, doc.id, .little);
+            try writer.writeInt(u32, doc.length, .little);
+
+            // Write term count for this document
+            try writer.writeInt(u32, @intCast(doc.terms.count()), .little);
+
+            var term_iter = doc.terms.iterator();
+            while (term_iter.next()) |entry| {
+                // Write term length and term
+                try writer.writeInt(u32, @intCast(entry.key_ptr.*.len), .little);
+                try writer.writeAll(entry.key_ptr.*);
+                // Write term frequency
+                try writer.writeInt(u32, entry.value_ptr.*, .little);
+            }
+        }
+
+        // Write term count
+        try writer.writeInt(u32, @intCast(self.terms.count()), .little);
+
+        // Write terms
+        var term_iter = self.terms.iterator();
+        while (term_iter.next()) |entry| {
+            // Write term length and term
+            try writer.writeInt(u32, @intCast(entry.key_ptr.*.len), .little);
+            try writer.writeAll(entry.key_ptr.*);
+
+            // Write term info
+            const info = entry.value_ptr.*;
+            try writer.writeInt(u32, info.doc_freq, .little);
+
+            // Write posting count
+            try writer.writeInt(u32, @intCast(info.postings.items.len), .little);
+
+            // Write postings
+            for (info.postings.items) |posting| {
+                try writer.writeInt(u32, posting.doc_id, .little);
+                try writer.writeInt(u32, posting.freq, .little);
+            }
+        }
+
+        // Write average document length
+        try writer.writeInt(u32, @bitCast(self.avg_doc_length), .little);
+    }
+
+    pub fn loadFromDisk(allocator: std.mem.Allocator, filename: []const u8) !*Index {
+        const file = try std.fs.cwd().openFile(filename, .{});
+        defer file.close();
+        const reader = file.reader();
+
+        const index = try allocator.create(Index);
+        index.* = Index{
+            .documents = std.ArrayList(Document).init(allocator),
+            .terms = std.StringHashMap(TermInfo).init(allocator),
+            .allocator = allocator,
+            .avg_doc_length = 0,
+        };
+
+        // Read document count
+        const doc_count = try reader.readInt(u32, .little);
+        try index.documents.ensureTotalCapacity(doc_count);
+
+        // Read documents
+        for (0..doc_count) |_| {
+            const id = try reader.readInt(u32, .little);
+            const length = try reader.readInt(u32, .little);
+            const term_count = try reader.readInt(u32, .little);
+
+            var doc = Document{
+                .id = id,
+                .length = length,
+                .terms = std.StringHashMap(u32).init(allocator),
+            };
+
+            for (0..term_count) |_| {
+                const term_len = try reader.readInt(u32, .little);
+                const term = try allocator.alloc(u8, term_len);
+                try reader.readNoEof(term);
+                const freq = try reader.readInt(u32, .little);
+                try doc.terms.put(term, freq);
+            }
+
+            try index.documents.append(doc);
+        }
+
+        // Read term count
+        const term_count = try reader.readInt(u32, .little);
+
+        // Read terms
+        for (0..term_count) |_| {
+            const term_len = try reader.readInt(u32, .little);
+            const term = try allocator.alloc(u8, term_len);
+            try reader.readNoEof(term);
+
+            const doc_freq = try reader.readInt(u32, .little);
+            const posting_count = try reader.readInt(u32, .little);
+
+            var term_info = TermInfo{
+                .doc_freq = doc_freq,
+                .postings = std.ArrayList(Posting).init(allocator),
+            };
+            try term_info.postings.ensureTotalCapacity(posting_count);
+
+            for (0..posting_count) |_| {
+                const doc_id = try reader.readInt(u32, .little);
+                const freq = try reader.readInt(u32, .little);
+                term_info.postings.appendAssumeCapacity(Posting{
+                    .doc_id = doc_id,
+                    .freq = freq,
+                });
+            }
+
+            try index.terms.put(term, term_info);
+        }
+
+        // Read average document length
+        const avg_doc_length_bits = try reader.readInt(u32, .little);
+        index.avg_doc_length = @bitCast(avg_doc_length_bits);
+
+        return index;
     }
 };
